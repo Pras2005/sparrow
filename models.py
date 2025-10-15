@@ -11,3 +11,15 @@ class RawScanData(BaseModel):
 class AnalogScanData(BaseModel):
     timestamp: int
     scan: List[float] # The only change is from int to float
+
+
+
+class HistoricalDataPoint(BaseModel):
+    timestamp: int
+    value: int # The value of the channel (0 or 1)
+
+# The final structure of the response from the /history endpoint
+class HistoryResponse(BaseModel):
+    channel: int
+    data: List[HistoricalDataPoint]
+
