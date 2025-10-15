@@ -3,42 +3,54 @@
 import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from pydantic import ValidationError
-from . import models, database, websocket, transformation_logic
+from . import models, database, websocket, transformation_logic, ml_predictor
 
 # --- Initialization ---
 app = FastAPI(title="RF Scanner API")
 
 raw_manager = websocket.ConnectionManager()
 analog_manager = websocket.ConnectionManager()
+prediction_manager = websocket.ConnectionManager()
 
+
+# --- Application Lifecycle Events ---
 @app.on_event("startup")
 def on_startup():
     """This function runs when the application starts."""
     print("Application starting up...")
+    ml_predictor.load_model() # <-- Load the model using the new module
     database.setup_database()
     print("Database setup complete.")
 
-# --- Core Logic (Refactored to a Helper Function) ---
+
+# --- Core Data Processing Logic ---
 async def process_and_broadcast_scan(data: models.RawScanData):
     """
-    Saves, transforms, and broadcasts a scan. This is the central logic
-    used by both the HTTP and WebSocket ingestion endpoints.
+    Saves, transforms, broadcasts a scan, and triggers a prediction.
     """
-    # 1. Save the original raw data to the database
+    # 1. Save and broadcast raw data
     database.save_to_sqlite(data)
-
-    # 2. Broadcast the raw data
     await raw_manager.broadcast(data.json())
 
-    # 3. Transform the data to simulated analog
+    # 2. Transform and broadcast analog data
     analog_scan_values = transformation_logic.to_simulated_analog(data.scan)
     analog_data = models.AnalogScanData(timestamp=data.timestamp, scan=analog_scan_values)
-
-    # 4. Broadcast the new analog data
     await analog_manager.broadcast(analog_data.json())
+    
+    # 3. Get a prediction from the ML model
+    prediction = ml_predictor.predict_next_state(
+        new_scan=data.scan, 
+        last_timestamp=data.timestamp
+    )
+    
+    # 4. If a prediction was generated, broadcast it
+    if prediction:
+        await prediction_manager.broadcast(prediction.json())
 
-# --- API Endpoints ---
-@app.post("/scan", status_code=222)
+
+# --- API and WebSocket Endpoints (No changes needed below this line) ---
+
+@app.post("/scan", status_code=202)
 async def receive_scan_data_http(data: models.RawScanData):
     """Receives scan data via HTTP POST."""
     await process_and_broadcast_scan(data)
@@ -52,13 +64,10 @@ async def get_history(
 ):
     """Retrieves historical scan data for a specific channel."""
     historical_data = database.query_history(
-        channel=channel,
-        start_time=start_time,
-        end_time=end_time
+        channel=channel, start_time=start_time, end_time=end_time
     )
     return {"channel": channel, "data": historical_data}
 
-# --- WebSocket Endpoints ---
 @app.websocket("/ws/raw")
 async def websocket_raw_endpoint(websocket: WebSocket):
     """Broadcasts raw binary scan data."""
@@ -71,13 +80,23 @@ async def websocket_raw_endpoint(websocket: WebSocket):
 
 @app.websocket("/ws/analog")
 async def websocket_analog_endpoint(websocket: WebSocket):
-    """Broadcasts simulated analog scan data."""
+    """Broadcasts simulated analog scan data for spectrograms."""
     await analog_manager.connect(websocket)
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         analog_manager.disconnect(websocket)
+
+@app.websocket("/ws/prediction")
+async def websocket_prediction_endpoint(websocket: WebSocket):
+    """Broadcasts real-time model predictions."""
+    await prediction_manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        prediction_manager.disconnect(websocket)
 
 @app.websocket("/ws/reception")
 async def websocket_reception_endpoint(websocket: WebSocket):
@@ -86,17 +105,11 @@ async def websocket_reception_endpoint(websocket: WebSocket):
     print("Client connected to reception endpoint.")
     try:
         while True:
-            # Wait for a JSON string from the client
             message = await websocket.receive_text()
             try:
-                # Validate the incoming data against our Pydantic model
                 data = models.RawScanData.parse_raw(message)
-                # If valid, process it just like the HTTP endpoint
                 await process_and_broadcast_scan(data)
             except (ValidationError, json.JSONDecodeError) as e:
-                # Handle cases where the client sends invalid data
                 print(f"Received invalid data on reception websocket: {e}")
-                # Optional: Send an error message back to the client
-                # await websocket.send_text('{"error": "Invalid data format"}')
     except WebSocketDisconnect:
         print("Client disconnected from reception endpoint.")

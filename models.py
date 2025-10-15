@@ -23,3 +23,6 @@ class HistoryResponse(BaseModel):
     channel: int
     data: List[HistoricalDataPoint]
 
+class PredictionData(BaseModel):
+    timestamp: int      # The future timestamp for the prediction
+    scan: List[float]
