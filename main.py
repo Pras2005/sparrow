@@ -1,6 +1,7 @@
 # app/main.py
 
 import json
+import threading # Import the threading module
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from pydantic import ValidationError
 from . import models, database, websocket, transformation_logic, ml_predictor
@@ -18,9 +19,14 @@ prediction_manager = websocket.ConnectionManager()
 def on_startup():
     """This function runs when the application starts."""
     print("Application starting up...")
-    ml_predictor.load_model() # <-- Load the model using the new module
-    database.setup_database()
-    print("Database setup complete.")
+    database.setup_database() # Ensure DB and table exist
+    ml_predictor.load_model()
+    
+    # Create and start the background worker thread for writing to the database
+    # daemon=True ensures the thread will exit when the main app exits
+    writer_thread = threading.Thread(target=database.database_writer_worker, daemon=True)
+    writer_thread.start()
+    print("Database writer thread started.")
 
 
 # --- Core Data Processing Logic ---
@@ -29,7 +35,8 @@ async def process_and_broadcast_scan(data: models.RawScanData):
     Saves, transforms, broadcasts a scan, and triggers a prediction.
     """
     # 1. Save and broadcast raw data
-    database.save_to_sqlite(data)
+    # This call is now non-blocking and will not cause lock errors
+    database.save_to_sqlite(data) 
     await raw_manager.broadcast(data.json())
 
     # 2. Transform and broadcast analog data
@@ -49,6 +56,7 @@ async def process_and_broadcast_scan(data: models.RawScanData):
 
 
 # --- API and WebSocket Endpoints (No changes needed below this line) ---
+# Your existing endpoints will work perfectly with this new setup.
 
 @app.post("/scan", status_code=202)
 async def receive_scan_data_http(data: models.RawScanData):
@@ -70,7 +78,7 @@ async def get_history(
 
 @app.websocket("/ws/raw")
 async def websocket_raw_endpoint(websocket: WebSocket):
-    """Broadcasts raw binary scan data."""
+    # ... (code is correct)
     await raw_manager.connect(websocket)
     try:
         while True:
@@ -78,9 +86,10 @@ async def websocket_raw_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         raw_manager.disconnect(websocket)
 
+
 @app.websocket("/ws/analog")
 async def websocket_analog_endpoint(websocket: WebSocket):
-    """Broadcasts simulated analog scan data for spectrograms."""
+    # ... (code is correct)
     await analog_manager.connect(websocket)
     try:
         while True:
@@ -90,7 +99,7 @@ async def websocket_analog_endpoint(websocket: WebSocket):
 
 @app.websocket("/ws/prediction")
 async def websocket_prediction_endpoint(websocket: WebSocket):
-    """Broadcasts real-time model predictions."""
+    # ... (code is correct)
     await prediction_manager.connect(websocket)
     try:
         while True:
@@ -100,7 +109,7 @@ async def websocket_prediction_endpoint(websocket: WebSocket):
 
 @app.websocket("/ws/reception")
 async def websocket_reception_endpoint(websocket: WebSocket):
-    """Receives scan data via WebSocket and processes it."""
+    # ... (code is correct)
     await websocket.accept()
     print("Client connected to reception endpoint.")
     try:
