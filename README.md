@@ -1,72 +1,64 @@
-# sparrow
+# Sparrow (RF Scanner API)
 
-## Table of Contents
+A high-performance **FastAPI** application designed to ingest, process, store, and predict Radio Frequency (RF) scan data in real-time. This system acts as a middleware layer handling raw signal data, translating it into simulated analog formats, and broadcasting both current and predicted future states over WebSockets.
 
-- [Deep Dive Description](#deep-dive-description)
-- [Project Structure](#project-structure)
-- [Prerequisites](#prerequisites)
-- [Installation & Setup](#installation--setup)
-- [Usage / Running Locally](#usage--running-locally)
+## Core Domain Models & Features
 
-## Deep Dive Description
-
-sparrow is a robust software engineering project carefully architected to provide scalable and efficient functionality. Built primarily in Python, this repository likely leverages modern frameworks to deliver high-performance backend processing, data analysis, or scripting utilities. The data architecture is defined using structured models and schemas, allowing for clean data validation and database ORM interactions. The application entry point orchestrates the lifecycle and initializes the core services. 
-
-The core functionality involves processing inputs, managing state or data persistence, and delivering outputs or serving API endpoints as dictated by the specific modular implementations found within the file tree. By breaking down the logic into distinct modules, the system ensures that each component handles a single responsibility, paving the way for easier testing and future feature expansions.
-
-## Project Structure
-
-```text
-sparrow/
-├── .gitignore
-├── README.md
-├── __init__.py
-├── database.py
-├── flysky_lstm_final_model_old_data.keras
-├── main.py
-├── ml_predictor.py
-├── models.py
-├── simulation_relay.py
-├── sparrow_data_2025-10-15_13-17-33.csv
-├── transformation_logic.py
-└── websocket.py
-
-```
+- **Real-Time Data Ingestion**: Accepts raw RF scan vectors (arrays of integers representing channel states) and UNIX timestamps via HTTP POST (`/scan`) or WebSocket (`/ws/reception`).
+- **Data Transformation**: Converts raw binary channel values into a simulated analog scale (float arrays) to emulate hardware signal characteristics (`transformation_logic.py`).
+- **Machine Learning Prediction**: Integrates a pre-trained Keras LSTM model (`flysky_lstm_final_model_old_data.keras`) to predict the future state of RF channels based on the latest incoming sequences.
+- **Asynchronous Storage Worker**: Employs a dedicated background threading model (`database.database_writer_worker`) to persist historical channel states to SQLite without blocking the main event loop, preventing lock contention under high throughput.
+- **WebSocket Broadcasting**: Maintains three separate WebSocket managers:
+  - `/ws/raw`: Streams raw scan inputs as they arrive.
+  - `/ws/analog`: Streams the transformed analog representations.
+  - `/ws/prediction`: Streams ML-predicted future channel states.
 
 ## Prerequisites
 
-Before you begin, ensure you have met the following requirements:
-- Python 3.8+
-- pip (Python package installer)
-- Virtualenv (recommended)
-- Git
+- **Python 3.9+**
+- **TensorFlow / Keras** (For loading the `.keras` model)
+- **FastAPI** & **Uvicorn**
+- **SQLite3**
 
 ## Installation & Setup
 
-Follow these step-by-step instructions to get a development environment running:
-
-1. **Clone the repository:**
+1. **Clone the repository**:
    ```bash
-   git clone git@github.com:Pras2005/sparrow.git
+   git clone <repo-url> sparrow
    cd sparrow
    ```
-
-2. **Set up a virtual environment:**
+2. **Setup virtual environment**:
    ```bash
    python -m venv venv
-   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+   source venv/bin/activate
    ```
-
-4. **Environment Variables:**
-   If there is a `.env.example` file, copy it to `.env` and configure the necessary keys:
+3. **Install Dependencies**:
+   *(Assuming standard environment setup since requirements.txt may not be explicitly listed)*
    ```bash
-   cp .env.example .env
+   pip install fastapi uvicorn pydantic tensorflow pandas
    ```
 
 ## Usage / Running Locally
 
-Start the application by running the main entry script:
+Start the application using Uvicorn:
+
 ```bash
-python main.py
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
-*(If the entry point is different, replace `main.py` with the appropriate script like `app.py` or run via Uvicorn/Flask)*
+
+- **API Documentation**: Available at `http://127.0.0.1:8000/docs`
+- **Simulation**: You can optionally run `python simulation_relay.py` to stream mock RF data into the ingest endpoint for testing.
+
+## Project Structure
+
+```text
+.
+├── main.py                  # FastAPI application entry point, lifecycle events, route definitions
+├── models.py                # Pydantic schemas (RawScanData, AnalogScanData, PredictionData)
+├── database.py              # SQLite storage logic and background writer thread
+├── websocket.py             # WebSocket connection management and broadcasting logic
+├── transformation_logic.py  # Algorithms to convert raw data to simulated analog responses
+├── ml_predictor.py          # Wrapper for loading and querying the Keras LSTM model
+├── flysky_lstm_final_model_old_data.keras  # Pre-trained ML weights for prediction
+└── simulation_relay.py      # Utility script to simulate incoming RF scanner hardware data
+```
